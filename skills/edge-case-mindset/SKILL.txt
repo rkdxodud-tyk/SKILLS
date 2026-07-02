@@ -1,0 +1,72 @@
+---
+name: edge-case-mindset
+description: Systematically identify and handle edge cases when writing or reviewing code in any language. Use when implementing functions, data processing, algorithms, or reviewing code for robustness.
+---
+
+# Edge Case Mindset
+
+Before considering any implementation complete, walk through this checklist.
+Do not skip categories — explicitly decide "not applicable" rather than ignoring them.
+
+## Core checklist
+
+### Empty & boundary inputs
+- Empty collections: `[]`, `{}`, `""`, empty iterators/streams
+- Single-element collections (many off-by-one bugs only appear here)
+- Boundary values: `0`, `-1`, `1`, min/max of the numeric type
+- First and last iteration of every loop — verify indices and fencepost logic
+
+### Null / absent values
+- Null, undefined, None, nil — at every layer, not just entry points
+- Missing keys/fields in maps, JSON, config files
+- Distinguish "absent" from "present but empty" from "present but null"
+
+### Numbers
+- Integer overflow/underflow, especially in multiplication and addition of large values
+- Division by zero and modulo by zero
+- Floating point: NaN, ±Infinity, -0.0, precision loss (never compare floats with `==`)
+- Negative numbers where only positives were expected (indices, lengths, counts)
+- Truncation vs rounding in integer division
+
+### Strings & text
+- Unicode: multi-byte characters, combining characters, emoji, surrogate pairs
+- "Length" ambiguity: bytes vs code points vs grapheme clusters
+- Leading/trailing whitespace, internal whitespace, only-whitespace strings
+- Case sensitivity and locale-dependent casing (Turkish `i` problem)
+- Injection risks when interpolating into SQL, shell, HTML, regex
+
+### Collections & iteration
+- Mutation during iteration
+- Duplicate elements where uniqueness was assumed
+- Unexpected ordering (hash maps are usually unordered)
+- Very large inputs: does the algorithm degrade quadratically? Does it fit in memory?
+
+### Time
+- Time zones and DST transitions (a day is not always 24 hours)
+- Leap years, leap seconds, month lengths
+- Clock skew, non-monotonic clocks for measuring durations
+- Timestamps at epoch boundaries; dates before 1970
+
+### Concurrency & external state
+- Race conditions: check-then-act (TOCTOU), read-modify-write
+- Partial failure: network call succeeds but response is lost
+- Retries causing duplicate side effects — is the operation idempotent?
+- Files: missing, locked, permission denied, disk full, path with spaces/unicode
+
+### Error paths
+- Every error path must be exercised mentally: what state is left behind on failure?
+- Resource cleanup on early return / exception (files, locks, connections)
+- Error messages should include context (what input, what operation)
+
+## Process rules
+
+1. **State assumptions explicitly.** When writing a function, add a comment or doc
+   listing preconditions (e.g., "assumes `items` is non-empty, sorted").
+2. **Validate at boundaries.** Validate external input (user, network, file) at the
+   edge of the system; internal code may rely on documented invariants.
+3. **Write the edge case tests first.** For any non-trivial function, list at
+   least 3 edge cases before writing the happy-path test.
+4. **When reviewing code**, ask for each function: "What is the weirdest legal
+   input? What happens at n=0 and n=1?"
+5. **Prefer making illegal states unrepresentable** (types, enums, constructors
+   that validate) over runtime checks scattered through the code.

@@ -1,0 +1,87 @@
+---
+name: rust-edge-cases
+description: Handle Rust-specific edge cases and pitfalls around integer arithmetic, unwrap, indexing, lifetimes, unsafe, and async. Use when writing or reviewing Rust code.
+---
+
+# Rust Edge Cases
+
+Rust prevents many bug classes, but these still bite. Apply on every Rust task.
+
+## Arithmetic
+
+- **Integer overflow panics in debug, wraps in release.** Never rely on default
+  arithmetic for untrusted or unbounded values. Choose explicitly:
+  - `checked_add` / `checked_mul` → returns `Option`, handle it
+  - `saturating_*` → clamps at min/max
+  - `wrapping_*` → only when wrapping is semantically intended (hashing, crypto)
+- `usize` subtraction underflows: `a - b` when `b > a` panics. Use
+  `a.checked_sub(b)` or `a.saturating_sub(b)`.
+- Casts with `as` silently truncate: `(300_i32 as u8) == 44`. Prefer
+  `try_into()` with error handling.
+- `i32::MIN / -1` and `i32::MIN.abs()` panic. Use `checked_div` / `checked_abs`.
+- Float: `NaN != NaN`; sorting floats needs `total_cmp` or `partial_cmp` handling.
+
+## Panics hiding in plain sight
+
+Audit and justify every one of these; prefer the non-panicking alternative:
+
+| Panicking | Prefer |
+|---|---|
+| `slice[i]` | `slice.get(i)` |
+| `.unwrap()` / `.expect()` | `?`, `match`, `unwrap_or_else` |
+| `str[a..b]` | `str.get(a..b)` (also: slicing mid-UTF-8 panics!) |
+| `RefCell::borrow_mut` | `try_borrow_mut` when re-entrancy is possible |
+| `Mutex::lock().unwrap()` | decide poisoning policy explicitly |
+| `vec.remove(i)`, `.swap_remove(i)` | bounds-check first |
+
+- `.unwrap()` is acceptable only when impossibility is locally provable —
+  add a comment stating the invariant: `// unwrap ok: regex is compile-checked`.
+- In libraries, never panic on user input. Return `Result`.
+
+## Strings
+
+- `String` is UTF-8: `s[0]` doesn't compile, `&s[0..1]` panics on multi-byte chars.
+- `.len()` is bytes, `.chars().count()` is code points; neither is grapheme
+  clusters (need `unicode-segmentation` for user-perceived characters).
+- `char` boundaries: use `s.char_indices()`, `s.is_char_boundary(i)` before slicing.
+
+## Collections & iterators
+
+- `HashMap` iteration order is random per-process — never depend on it; use
+  `BTreeMap` when order matters.
+- `Iterator::sum`/`product` on integers can overflow — same rules as arithmetic.
+- `sort_by` with a comparator that violates total order panics (since 1.81) or
+  produces garbage. Floats: use `total_cmp`.
+- `drain`, `retain`, `extract_if` — check off-by-one and re-entrancy assumptions.
+
+## Ownership & API edge cases
+
+- Returning references to locals — think about who owns data outliving the call.
+- `Deref` to temporaries: `let s = &something.to_string()[..];` dangles conceptually — watch temporary lifetimes in `match` scrutinees and `if let` (changed in Rust 2024).
+- Implementing `Drop` + moving fields out requires `Option::take` or `ManuallyDrop`.
+- Trait objects: `dyn Trait` needs object safety; `Box<dyn Error>` loses type info — consider `thiserror`/`anyhow` appropriately (libraries: concrete errors; apps: `anyhow`).
+
+## Async
+
+- Holding a `std::sync::Mutex` guard across `.await` → deadlock risk; it's also
+  not `Send`. Use `tokio::sync::Mutex` or drop the guard before awaiting.
+- Cancellation: futures can be dropped at any `.await`. Ensure cleanup is
+  drop-safe; `select!` arms cancel the losing branch.
+- Blocking calls (`std::fs`, heavy CPU) inside async → starve the runtime.
+  Use `spawn_blocking`.
+- `tokio::spawn` tasks are detached; a panicked task fails silently unless you
+  `.await` the `JoinHandle`.
+
+## Unsafe
+
+- Every `unsafe` block needs a `// SAFETY:` comment proving the invariants.
+- Common UB: aliasing `&mut`, dangling pointers after `Vec` reallocation,
+  uninitialized memory (`MaybeUninit`), transmuting with wrong layout.
+- Run Miri on any code with `unsafe`.
+
+## Testing edge cases in Rust
+
+- Test with `#[should_panic]` sparingly; prefer `Result`-returning tests.
+- Use `proptest`/`quickcheck` for arithmetic and parsing code.
+- Test both debug and release if arithmetic behavior matters.
+- `cargo clippy -- -W clippy::pedantic` and fix or explicitly allow.

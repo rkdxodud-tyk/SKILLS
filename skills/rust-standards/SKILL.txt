@@ -1,0 +1,83 @@
+---
+name: rust-standards
+description: Enforces idiomatic Rust including ownership patterns, error handling, API design, and safety practices. Use when writing, reviewing, or refactoring Rust code, or working with Cargo projects.
+---
+
+# Rust Standards
+
+Apply these rules to all Rust code. Extend, don't replace, general SWE principles.
+
+## Ownership & Borrowing
+
+- Take the weakest form you need in function parameters:
+  - `&str` over `&String`, `&[T]` over `&Vec<T>`, `impl AsRef<Path>` for paths.
+  - Borrow (`&T`) by default; take ownership (`T`) only when you must store or consume it.
+- Don't fight the borrow checker with `clone()`. If cloning to appease lifetimes, restructure first. Clone is fine when semantically correct (cheap types, intentional duplication) — comment when non-obvious.
+- Use `Cow<'_, str>` when a function sometimes borrows and sometimes allocates.
+- Prefer iterators over index loops; prefer iterator chains over manual accumulation, but break into named steps when a chain exceeds ~4 adapters.
+- `Rc<RefCell<T>>` / `Arc<Mutex<T>>` are last resorts for shared mutability — first try restructuring ownership.
+
+## Error Handling
+
+- **Never `unwrap()` or `expect()` in library/production paths.** Allowed in: tests, examples, and cases where invariant is locally provable (document with `expect("reason: ...")`).
+- Libraries: define error enums with `thiserror`. Applications: use `anyhow::Result` with `.context("what was being attempted")`.
+- Propagate with `?`, adding context at each meaningful boundary.
+- `panic!` only for programmer errors (broken invariants), never for expected failures like bad input or I/O errors.
+- Don't ignore `Result` — no `let _ = fallible()` without a comment explaining why failure is acceptable.
+
+## Type-Driven Design
+
+- Make illegal states unrepresentable — use enums, not boolean flags:
+
+  ```rust
+  // Bad: two bools with 4 states, 2 invalid
+  struct Conn { connected: bool, authenticated: bool }
+  // Good
+  enum Conn { Disconnected, Connected, Authenticated(Session) }
+  ```
+
+- Use the newtype pattern for domain values: `struct UserId(u64);` — prevents mixing IDs, enables targeted impls.
+- Parse, don't validate: convert raw input into a rich type once (`EmailAddress::parse(&str) -> Result<EmailAddress>`), then internals never re-check.
+- Use `#[non_exhaustive]` on public enums/structs that may grow.
+- Prefer `Option<T>` combinators (`map`, `and_then`, `unwrap_or_else`, `ok_or`) over match when it improves clarity — but never at the cost of readability.
+
+## API & Module Design
+
+- Follow the Rust API Guidelines: `snake_case` functions, `CamelCase` types, `SCREAMING_SNAKE_CASE` consts.
+- Naming conventions: `as_` (cheap borrow), `to_` (expensive conversion), `into_` (consuming conversion), `is_`/`has_` (predicates).
+- Implement standard traits where sensible: `Debug` (nearly always), `Clone`, `Default`, `PartialEq`, `Display` for user-facing types, `From` for conversions (get `Into` free).
+- Accept `impl Trait` / generics in inputs; return concrete types or `impl Trait` in outputs.
+- Keep modules private by default; expose a deliberate public API with `pub`. Use `pub(crate)` for internal sharing.
+- Derive, don't hand-write: `#[derive(Debug, Clone, PartialEq)]` beats manual impls.
+
+## Unsafe Code
+
+- Avoid `unsafe` unless there is no safe alternative and the need is proven (FFI, verified performance hotspot).
+- Every `unsafe` block requires a `// SAFETY:` comment stating the invariants that make it sound.
+- Encapsulate unsafety: expose a safe API wrapping the unsafe internals; keep unsafe blocks minimal.
+- Never use `unsafe` to silence the borrow checker.
+
+## Concurrency & Async
+
+- Prefer message passing (channels) over shared state; prefer `Arc<Mutex<T>>` over `static mut` (never use `static mut`).
+- Hold locks for the shortest span possible; never `.await` while holding a `std::sync::Mutex` guard — use `tokio::sync::Mutex` if you must.
+- Don't block in async contexts: use `spawn_blocking` for CPU-heavy or blocking I/O work.
+- Match the project's runtime (tokio vs async-std); never mix runtimes.
+
+## Tooling & Testing
+
+- Code must pass `cargo clippy -- -D warnings` and `cargo fmt --check`. Fix lints properly; `#[allow(...)]` requires a justifying comment.
+- Unit tests in `#[cfg(test)] mod tests` beside the code; integration tests in `tests/`.
+- Test error paths, not just success: assert on `Err` variants.
+- Use doc tests for public API examples — they double as verified documentation.
+- Add `# Errors` and `# Panics` sections to doc comments of public fallible functions.
+
+## Anti-Patterns to Reject
+
+- `.clone()` spam to dodge lifetimes
+- `unwrap()` chains in production code
+- Stringly-typed APIs (`fn set_mode(mode: &str)`) — use enums
+- `Deref` abuse to fake inheritance
+- Premature `Box<dyn Trait>` where generics work
+- Giant `match` blocks that should be trait dispatch or lookup tables
+- Ignoring `#[must_use]` warnings
